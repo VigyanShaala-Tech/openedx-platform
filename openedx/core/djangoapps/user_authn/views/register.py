@@ -219,8 +219,10 @@ def create_account_with_params(request, params):  # pylint: disable=too-many-sta
         )
 
         new_user = authenticate_new_user(request, user.username, form.cleaned_data['password'])
-        django_login(request, new_user)
-        request.session.set_expiry(0)
+        # Modified by Yagnesh
+        # This will prevent the user from logging in automatically after registration.
+        # django_login(request, new_user)
+        # request.session.set_expiry(0)
 
     try:
         _record_is_marketable_attribute(is_marketable, new_user)
@@ -251,7 +253,8 @@ def create_account_with_params(request, params):  # pylint: disable=too-many-sta
     else:
         redirect_to, root_url = get_next_url_for_login_page(request, include_host=True)
         redirect_url = get_redirect_url_with_host(root_url, redirect_to)
-        compose_and_send_activation_email(user, profile, registration, redirect_url, True)
+        # Modified by Yagnesh
+        # compose_and_send_activation_email(user, profile, registration, redirect_url, True)
 
     if settings.FEATURES.get('ENABLE_DISCUSSION_EMAIL_DIGEST'):
         try:
@@ -623,7 +626,8 @@ class RegistrationView(APIView):
         response = self._create_response(
             request, {'authenticated_user': authenticated_user}, status_code=200, redirect_url=redirect_url
         )
-        set_logged_in_cookies(request, response, user)
+        # Modified by Yagnesh
+        # set_logged_in_cookies(request, response, user)
         if not user.is_active and settings.SHOW_ACCOUNT_ACTIVATION_CTA and not settings.MARKETING_EMAILS_OPT_IN:
             response.set_cookie(
                 settings.SHOW_ACTIVATE_CTA_POPUP_COOKIE_NAME,

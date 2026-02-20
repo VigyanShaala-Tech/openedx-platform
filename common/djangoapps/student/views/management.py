@@ -9,6 +9,8 @@ import urllib.parse
 import uuid
 from collections import namedtuple
 import re
+from datetime import timedelta
+from django.utils import timezone
 
 from django.conf import settings
 from django.contrib import messages
@@ -89,6 +91,11 @@ from common.djangoapps.util.db import outer_atomic
 from common.djangoapps.util.json_request import JsonResponse
 from common.djangoapps.student.signals import USER_EMAIL_CHANGED
 from xmodule.modulestore.django import modulestore  # lint-amnesty, pylint: disable=wrong-import-order
+
+# Added by Yagnesh
+from openedx.core.djangoapps.user_authn.views.register import REGISTER_USER
+from extra_registration_fields.models import ActivationLinkExpiry
+from extra_registration_fields.otp_settings import activation_link_expiry_hours
 
 log = logging.getLogger("edx.student")
 
@@ -622,6 +629,39 @@ def activate_account(request, key):
                 extra_tags='account-activation aa-icon',
             )
         else:
+            # Added by Yagnesh
+            # Check activation link expiry (default 48 hours). If expired, block activation.
+            expiry = ActivationLinkExpiry.objects.filter(registration=registration).first()
+
+            if not expiry:
+                expiry = ActivationLinkExpiry.objects.create(
+                    registration=registration,
+                    expires_at=timezone.now() + timedelta(hours=activation_link_expiry_hours())
+                )
+
+            # If expired → generate new key + resend email
+            if expiry.expires_at and timezone.now() > expiry.expires_at:
+                registration.activation_key = uuid.uuid4().hex
+                registration.save(update_fields=["activation_key"])
+
+                expiry.expires_at = timezone.now() + timedelta(hours=activation_link_expiry_hours())
+                expiry.save(update_fields=["expires_at"])
+
+                # Send activation email via custom Rule Engine (not Open edX default)
+                REGISTER_USER.send(
+                    sender=None,
+                    user=registration.user,
+                    registration=registration,
+                )
+
+                activation_message_type = "info"
+                messages.info(
+                    request,
+                    _("Activation link expired. We sent you a new activation email."),
+                    extra_tags="account-activation aa-icon",
+                )
+                return redirect(f"{settings.LOGIN_URL}?account_activation_status=expired")
+
             registration.activate()
             # Success message for logged in users.
             message = _('{html_start}Success{html_end} You have {activated_or_confirmed} your {account_or_email}.')
