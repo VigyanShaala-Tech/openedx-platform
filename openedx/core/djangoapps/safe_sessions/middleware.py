@@ -82,7 +82,8 @@ from typing import Union
 
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY
-from django.contrib.auth.models import AnonymousUser
+from django.shortcuts import redirect
+from django.contrib.auth.models import AnonymousUser, User
 from django.contrib.auth.views import redirect_to_login
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.core import signing
@@ -398,6 +399,22 @@ class SafeSessionMiddleware(SessionMiddleware, MiddlewareMixin):
             return process_request_response
 
         user_id = self.get_user_id_from_session(request)
+        # ---- BLOCKED USER FROM LOGIN STARTS ----
+        # Added by Yagnesh
+        from user_metadata_app.models import UserMetaData
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+                if hasattr(user, "user_metadata") and user.user_metadata.is_blocked:
+                    # destroy session
+                    request.session.flush()
+                    # prevent infinite loop (very important)
+                    if request.path != "/login":
+                        return redirect("/login?account_blocked=1")
+            except (User.DoesNotExist, UserMetaData.DoesNotExist):
+                pass
+        # ---- BLOCKED USER FROM LOGIN ENDS ----
+
         if cookie_data_string and user_id is not None:
 
             if safe_cookie_data.verify(user_id):  # Step 4

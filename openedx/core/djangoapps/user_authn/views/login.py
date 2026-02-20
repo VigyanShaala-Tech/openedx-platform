@@ -9,7 +9,10 @@ import json
 import logging
 import re
 import urllib
+import uuid
 
+from datetime import timedelta
+from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth import login as django_login
@@ -61,6 +64,12 @@ from openedx.core.djangoapps.util.user_messages import PageLevelMessages
 from openedx.core.djangolib.markup import HTML, Text
 from openedx.core.lib.api.view_utils import require_post_params  # lint-amnesty, pylint: disable=unused-import
 from openedx.features.enterprise_support.api import activate_learner_enterprise, get_enterprise_learner_data_from_api
+
+# Added by Yagnesh
+from extra_registration_fields.models import ActivationLinkExpiry
+from extra_registration_fields.otp_settings import activation_link_expiry_hours
+from openedx.core.djangoapps.user_authn.views.register import REGISTER_USER
+from common.djangoapps.student.models import Registration
 
 log = logging.getLogger("edx.student")
 AUDIT_LOG = logging.getLogger("audit")
@@ -222,13 +231,34 @@ def _log_and_raise_inactive_user_auth_error(unauthenticated_user):
     AUDIT_LOG.warning(f"Login failed - Account not active for user.id: {unauthenticated_user.id}, resending activation")
 
     profile = UserProfile.objects.get(user=unauthenticated_user)
-    compose_and_send_activation_email(unauthenticated_user, profile)
+    # Added by Yagnesh
+    registration = Registration.objects.filter(user=unauthenticated_user).first()
+    if registration:
+        expiry = ActivationLinkExpiry.objects.filter(registration=registration).first()
+        if not expiry:
+            expiry = ActivationLinkExpiry.objects.create(
+                registration=registration,
+                expires_at=timezone.now() + timedelta(hours=activation_link_expiry_hours())
+            )
 
+        # if activation link expired → rotate key + expiry
+        if expiry.expires_at and timezone.now() > expiry.expires_at:
+            registration.activation_key = uuid.uuid4().hex
+            registration.save(update_fields=["activation_key"])
+            expiry.expires_at = timezone.now() + timedelta(hours=activation_link_expiry_hours())
+            expiry.save(update_fields=["expires_at"])
+
+    # send activation email (always valid now)
+    REGISTER_USER.send(sender=None, user=unauthenticated_user, registration=registration,)
     raise AuthFailedError(
         error_code="inactive-user",
         context={
-            "platformName": configuration_helpers.get_value("PLATFORM_NAME", settings.PLATFORM_NAME),
-            "supportLink": configuration_helpers.get_value("SUPPORT_SITE_LINK", settings.SUPPORT_SITE_LINK),
+            "platformName": configuration_helpers.get_value(
+                "PLATFORM_NAME", settings.PLATFORM_NAME
+            ),
+            "supportLink": configuration_helpers.get_value(
+                "SUPPORT_SITE_LINK", settings.SUPPORT_SITE_LINK
+            ),
         },
     )
 
