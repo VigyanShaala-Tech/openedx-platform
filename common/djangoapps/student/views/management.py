@@ -93,7 +93,6 @@ from common.djangoapps.student.signals import USER_EMAIL_CHANGED
 from xmodule.modulestore.django import modulestore  # lint-amnesty, pylint: disable=wrong-import-order
 
 # Added by Yagnesh
-from openedx.core.djangoapps.user_authn.views.register import REGISTER_USER
 from extra_registration_fields.models import ActivationLinkExpiry
 from extra_registration_fields.otp_settings import activation_link_expiry_hours
 
@@ -631,6 +630,7 @@ def activate_account(request, key):
         else:
             # Added by Yagnesh
             # Check activation link expiry (default 48 hours). If expired, block activation.
+            from openedx.core.djangoapps.user_authn.views.register import REGISTER_USER
             expiry = ActivationLinkExpiry.objects.filter(registration=registration).first()
 
             if not expiry:
