@@ -219,10 +219,11 @@ def create_account_with_params(request, params):  # pylint: disable=too-many-sta
         )
 
         new_user = authenticate_new_user(request, user.username, form.cleaned_data['password'])
-        # Modified by Yagnesh
-        # This will prevent the user from logging in automatically after registration.
-        # django_login(request, new_user)
-        # request.session.set_expiry(0)
+
+        # Only auto-login for third-party signup (Google,) By Yagnesh
+        if third_party_provider or running_pipeline:
+            django_login(request, new_user)
+            request.session.set_expiry(0)
 
     try:
         _record_is_marketable_attribute(is_marketable, new_user)
@@ -626,8 +627,9 @@ class RegistrationView(APIView):
         response = self._create_response(
             request, {'authenticated_user': authenticated_user}, status_code=200, redirect_url=redirect_url
         )
-        # Modified by Yagnesh
-        # set_logged_in_cookies(request, response, user)
+        # Modified by Yagnesh (Only set cookies if user is active (Google users))
+        if user.is_active:
+            set_logged_in_cookies(request, response, user)
         if not user.is_active and settings.SHOW_ACCOUNT_ACTIVATION_CTA and not settings.MARKETING_EMAILS_OPT_IN:
             response.set_cookie(
                 settings.SHOW_ACTIVATE_CTA_POPUP_COOKIE_NAME,
