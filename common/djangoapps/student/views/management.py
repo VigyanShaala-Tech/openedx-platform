@@ -93,7 +93,6 @@ from common.djangoapps.student.signals import USER_EMAIL_CHANGED
 from xmodule.modulestore.django import modulestore  # lint-amnesty, pylint: disable=wrong-import-order
 
 # Added by Yagnesh
-from openedx.core.djangoapps.user_authn.views.register import REGISTER_USER
 from extra_registration_fields.models import ActivationLinkExpiry
 from extra_registration_fields.otp_settings import activation_link_expiry_hours
 
@@ -646,7 +645,7 @@ def activate_account(request, key):
 
                 expiry.expires_at = timezone.now() + timedelta(hours=activation_link_expiry_hours())
                 expiry.save(update_fields=["expires_at"])
-
+                from openedx.core.djangoapps.user_authn.views.register import REGISTER_USER
                 # Send activation email via custom Rule Engine (not Open edX default)
                 REGISTER_USER.send(
                     sender=None,
