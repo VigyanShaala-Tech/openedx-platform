@@ -1054,3 +1054,9 @@ urlpatterns += [
 urlpatterns += [
     path('api/notifications/', include('openedx.core.djangoapps.notifications.urls')),
 ]
+
+# Added by Mahendra for SAML based login
+if 'djangosaml2idp' in settings.INSTALLED_APPS:
+    urlpatterns = [
+        re_path(rf"^idp/", include("djangosaml2idp.urls")),
+    ]
