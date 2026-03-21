@@ -694,6 +694,8 @@ def do_create_account(form, custom_form=None):
         email=form.cleaned_data["email"],
         is_active=False
     )
+    # Added by Mahendra
+    user.first_name = form.cleaned_data["name"]
     password = normalize_password(form.cleaned_data["password"])
     user.set_password(password)
     registration = Registration()
