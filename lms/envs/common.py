@@ -2384,6 +2384,8 @@ INSTALLED_APPS = [
     "openedx_learning.apps.authoring.units",
     "openedx_learning.apps.authoring.subsections",
     "openedx_learning.apps.authoring.sections",
+    # Added by Mahendra
+    "djangosaml2idp"
 ]
 
 ######################### Django Rest Framework ########################
