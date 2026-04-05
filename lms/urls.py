@@ -1056,7 +1056,6 @@ urlpatterns += [
 ]
 
 # Added by Mahendra for SAML based login
-if 'djangosaml2idp' in settings.INSTALLED_APPS:
-    urlpatterns = [
-        re_path(rf"^idp/", include("djangosaml2idp.urls")),
-    ]
+urlpatterns += [
+    re_path(fr'^idp/', include("djangosaml2idp.urls")),
+]
