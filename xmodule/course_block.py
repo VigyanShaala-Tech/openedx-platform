@@ -548,7 +548,8 @@ class CourseFields:  # lint-amnesty, pylint: disable=missing-class-docstring
     advanced_modules = List(
         display_name=_("Advanced Module List"),
         help=_("Enter the names of the advanced modules to use in your course."),
-        scope=Scope.settings
+        scope=Scope.settings,
+        default=["pdf", "edx_sga", "scorm", "fill_blank_xblock", "h5pxblock", "match_column_xblock", "quickquizmaker", "zoom_xblock", "tas"]
     )
     has_children = True
     show_timezone = Boolean(
