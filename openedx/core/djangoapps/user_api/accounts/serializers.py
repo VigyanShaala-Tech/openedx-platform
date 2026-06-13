@@ -166,6 +166,7 @@ class UserReadOnlySerializer(serializers.Serializer):  # lint-amnesty, pylint: d
             "country": None,
             "state": None,
             "profile_image": None,
+            "avatar": None,
             "language_proficiencies": None,
             "name": None,
             "gender": None,
@@ -211,6 +212,9 @@ class UserReadOnlySerializer(serializers.Serializer):  # lint-amnesty, pylint: d
                     "phone_number": user_profile.phone_number,
                 }
             )
+
+        profile_image_data = data.get("profile_image") or {}
+        data["avatar"] = profile_image_data.get("image_url_medium")
 
         try:
             pending_name_change = PendingNameChange.objects.get(user=user)
