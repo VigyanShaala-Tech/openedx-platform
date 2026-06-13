@@ -62,7 +62,8 @@ def get_link_for_about_page(course):
     elif settings.FEATURES.get('ENABLE_MKTG_SITE') and getattr(course, 'marketing_url', None):
         course_about_url = course.marketing_url
     else:
-        course_about_url = f'{about_base_url}/courses/{course.id}/about'
+        # Updated by Mahendra
+        course_about_url = f'{about_base_url}/courses/{course.id}'
 
     ## .. filter_implemented_name: CourseAboutPageURLRequested
     ## .. filter_type: org.openedx.learning.course_about.page.url.requested.v1
