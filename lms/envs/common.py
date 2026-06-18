@@ -2789,6 +2789,7 @@ ACCOUNT_VISIBILITY_CONFIGURATION = {
     # The list of account fields that are always public
     "public_fields": [
         'account_privacy',
+        'avatar',
         'profile_image',
         'username',
     ],
