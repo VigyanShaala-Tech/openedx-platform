@@ -621,13 +621,17 @@ def get_courses_order_by(
     """Return course overviews based on a base queryset ordered by a query.
 
     Args:
-        order_query (str): any string used to order Course Overviews.
+        order_query (str): any string used to order Course Overviews. Defaults to
+            "display_name" (matching the "Name A-Z" default sort shown in Studio home)
+            when not provided, so the ordering is consistent between the initial,
+            param-less page load and subsequent paginated/sorted requests.
         course_overviews (Course Overview objects): queryset to be ordered.
     """
-    if not order_query:
-        return course_overviews
+    order_query = order_query or 'display_name'
     try:
-        return course_overviews.order_by(order_query)
+        # "id" is added as a secondary, unique sort key so courses with the same
+        # display_name still sort deterministically and don't shift between pages.
+        return course_overviews.order_by(order_query, 'id')
     except FieldError as e:
         log.exception(f"Error ordering courses by {order_query}: {e}")
         return course_overviews
