@@ -58,9 +58,8 @@ class CourseListGetForm(UsernameValidatorMixin, Form):
 
     # white list of all supported filter fields
     filter_type = namedtuple('filter_type', ['param_name', 'field_name'])
-    supported_filters = [
-        filter_type(param_name='mobile', field_name='mobile_available'),
-    ]
+    # updated by Mahendra
+    supported_filters = []
     mobile = ExtendedNullBooleanField(required=False)
     active_only = ExtendedNullBooleanField(required=False)
     permissions = MultiValueField(required=False)
