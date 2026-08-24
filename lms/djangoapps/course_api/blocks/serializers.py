@@ -2,6 +2,9 @@
 Serializers for Course Blocks related return objects.
 """
 
+import re
+from datetime import datetime, timedelta
+
 from django.conf import settings
 from rest_framework import serializers
 from rest_framework.reverse import reverse
@@ -217,6 +220,9 @@ class BlockSerializer(serializers.Serializer):  # pylint: disable=abstract-metho
         if data.get('type', '') == 'google-document':
             data['google_document_web_url'] = self.get_google_document_web_url(data)
 
+        if data.get('type', '') == 'zoom_xblock':
+            data['meeting_info'] = self.get_meeting_info(data)
+
         return data
 
     # Added by Mahendra
@@ -241,6 +247,100 @@ class BlockSerializer(serializers.Serializer):  # pylint: disable=abstract-metho
         item = modulestore().get_item(location)
         return getattr(item, 'embed_code', None).replace("\n", "")
 
+
+    @staticmethod
+    def _get_meeting_end_time(start_time, duration):
+        """
+        Parses ZoomXBlock's stored `start_time` ("%Y-%m-%dT%H:%M") and
+        `duration` ("Xh Ym" -- see create_meeting/update_meeting in
+        zoom_xblock.py) into the meeting's end datetime.
+
+        Returns None if start_time/duration is missing or unparseable, the
+        same "unknown end time" contract getMeetingEndTime() in
+        zoom_xblock.js uses -- callers must not treat None as "already ended".
+        """
+        if not start_time or not duration:
+            return None
+        try:
+            start = datetime.strptime(start_time, "%Y-%m-%dT%H:%M")
+        except (TypeError, ValueError):
+            return None
+
+        match = re.match(r"(\d+)\s*h\s*(\d+)\s*m", str(duration).strip(), re.IGNORECASE)
+        if not match:
+            return None
+        minutes = int(match.group(1)) * 60 + int(match.group(2))
+        if minutes <= 0:
+            return None
+
+        return start + timedelta(minutes=minutes)
+
+    @staticmethod
+    def _format_start_time(start_time):
+        """
+        Reformats ZoomXBlock's stored `start_time` ("%Y-%m-%dT%H:%M") into
+        "M/D/YYYY, h:mm:ss AM/PM" (e.g. "8/4/2026, 10:10:00 PM"), matching the
+        en-US `Date.toLocaleString()` format zoom_xblock.js renders in
+        buildStudent()/updateCardUI(). Returns the raw value unchanged if it
+        can't be parsed, so a missing/malformed start_time doesn't crash the API.
+        """
+        if not start_time:
+            return start_time
+        try:
+            parsed = datetime.strptime(start_time, "%Y-%m-%dT%H:%M")
+        except (TypeError, ValueError):
+            return start_time
+        return "{month}/{day}/{year}, {time}".format(
+            month=parsed.month,
+            day=parsed.day,
+            year=parsed.year,
+            time=parsed.strftime("%I:%M:%S %p").lstrip("0"),
+        )
+
+    def get_meeting_info(self, data):
+        """
+        Returns the Zoom live-class info for a `zoom_xblock` block.
+
+        Mirrors what ZoomXBlock.student_view() passes to the frontend (see
+        zoom_xblock/zoom_xblock.py in vigyanshaala-custom-extensions), reading
+        the same XBlock fields directly off the block rather than importing
+        the zoom_integration app, so this stays a plain edx-platform block
+        field lookup like get_pdf_web_url/get_google_document_web_url above.
+        """
+        block_id = data.get('id')
+        try:
+            location = UsageKey.from_string(block_id)
+        except InvalidKeyError:
+            return None
+        item = modulestore().get_item(location)
+
+        meeting_id = getattr(item, 'meeting_id', '') or ''
+        topic = getattr(item, 'topic', '') or ''
+        start_time = getattr(item, 'start_time', '') or ''
+        duration = getattr(item, 'duration', '') or ''
+        is_session_ongoing = False
+        zoom_meeting_id = ''
+        passcode = ''
+        if meeting_id:
+            try:
+                from zoom_integration.models import Meetings
+                meeting = Meetings.objects.get(internal_id=meeting_id)
+                is_session_ongoing = meeting.status == 'ongoing'
+                zoom_meeting_id = meeting.meeting_id
+                passcode = meeting.password
+            except Exception as e:
+                pass
+        meeting_end_time = self._get_meeting_end_time(start_time, duration)
+        is_meeting_ended = meeting_end_time is not None and meeting_end_time < datetime.now()
+        return {
+            "meeting_id": zoom_meeting_id,
+            "topic": topic,
+            "passcode": passcode,
+            "start_time": self._format_start_time(start_time),
+            "duration": duration,
+            "isMeetingEnded": is_meeting_ended,
+            "isSessionOngoing": is_session_ongoing,
+        }
 
 class BlockDictSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
