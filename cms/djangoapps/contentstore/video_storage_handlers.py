@@ -41,6 +41,8 @@ from edxval.api import (
     update_video_image,
     update_video_status
 )
+from edxval.models import EncodedVideo, Profile
+from edxval.models import Video as ValVideo
 from fs.osfs import OSFS
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey
@@ -221,6 +223,10 @@ def handle_videos(request, course_key_string, edx_video_id=None):
     elif request.method == "DELETE":
         remove_video_for_course(course_key_string, edx_video_id)
         return JsonResponse()
+    elif request.method == "POST" and edx_video_id:  #Added by Developer
+        from .tasks import finalize_video_upload_task
+        finalize_video_upload_task.delay(course_key_string, edx_video_id)
+        return JsonResponse({'edx_video_id': edx_video_id, 'status': 'processing'})
     else:
         if is_status_update_request(request.json):
             return send_video_status_update(request.json)
@@ -863,8 +869,13 @@ def videos_post(course, request):
             'encoded_videos': [],
             'courses': [str(course.id)]
         })
-
-        resp_files.append({'file_name': file_name, 'upload_url': upload_url, 'edx_video_id': edx_video_id})
+        # Added by Developer
+        resp_files.append({
+            'file_name': file_name,
+            'upload_url': upload_url,
+            'edx_video_id': edx_video_id,
+            'metadata': metadata_list,
+        })
 
     return {'files': resp_files}, 200
 
@@ -886,6 +897,12 @@ def storage_service_bucket():
             'aws_secret_access_key': settings.AWS_SECRET_ACCESS_KEY
         }
 
+    # Added by Developer
+    region = getattr(settings, 'AWS_S3_REGION_NAME', None)
+    if region:
+        os.environ['S3_USE_SIGV4'] = 'True'
+        params['host'] = f's3.{region}.amazonaws.com'
+
     conn = S3Connection(**params)
 
     # We don't need to validate our bucket, it requires a very permissive IAM permission
@@ -904,6 +921,125 @@ def storage_service_key(bucket, file_name):
         file_name
     )
     return s3.key.Key(bucket, key_name)
+
+
+# Added by Developer
+DIRECT_UPLOAD_ENCODING_PROFILE = 'desktop_mp4'
+
+
+def _read_mp4_duration_seconds(file_path):
+    """
+    Reads real duration out of an mp4/mov file's `moov`/`mvhd` box,
+    without any external dependency (ffmpeg, mutagen, ...) or network calls --
+    Studio only accepts .mp4/.mov uploads (see VIDEO_SUPPORTED_FILE_FORMATS)
+    and both share the same ISO-base-media/QuickTime atom structure, so one
+    small parser covers both. Returns None if duration can't be determined.
+    """
+    def iter_boxes(file_obj, start, end):
+        pos = start
+        while pos < end - 8:
+            file_obj.seek(pos)
+            size_bytes = file_obj.read(4)
+            box_type = file_obj.read(4).decode('latin1', errors='ignore')
+            if len(size_bytes) < 4 or len(box_type) < 4:
+                return
+            size = int.from_bytes(size_bytes, 'big')
+            header_size = 8
+            if size == 1:
+                size = int.from_bytes(file_obj.read(8), 'big')
+                header_size = 16
+            elif size == 0:
+                size = end - pos
+            if size < header_size:
+                return
+            yield box_type, pos + header_size, pos + size
+            pos += size
+
+    try:
+        with open(file_path, 'rb') as file_obj:
+            file_obj.seek(0, os.SEEK_END)
+            file_size = file_obj.tell()
+            for box_type, moov_start, moov_end in iter_boxes(file_obj, 0, file_size):
+                if box_type != 'moov':
+                    continue
+                for inner_type, mvhd_start, __ in iter_boxes(file_obj, moov_start, moov_end):
+                    if inner_type != 'mvhd':
+                        continue
+                    file_obj.seek(mvhd_start)
+                    version = file_obj.read(1)[0]
+                    file_obj.read(3)  # flags
+                    if version == 1:
+                        file_obj.read(16)  # creation_time + modification_time (8 bytes each)
+                        timescale = int.from_bytes(file_obj.read(4), 'big')
+                        duration = int.from_bytes(file_obj.read(8), 'big')
+                    else:
+                        file_obj.read(8)  # creation_time + modification_time (4 bytes each)
+                        timescale = int.from_bytes(file_obj.read(4), 'big')
+                        duration = int.from_bytes(file_obj.read(4), 'big')
+                    return (duration / timescale) if timescale else None
+        return None
+    except (OSError, IndexError):
+        LOGGER.exception('VIDEOS: failed to parse mp4 duration from [%s]', file_path)
+        return None
+
+
+def finalize_uploaded_video(course_key_string, edx_video_id):
+    """
+    "poor man's" completion step for the direct-to-S3 upload flow,
+    run asynchronously once the frontend confirms its presigned PUT to S3
+    succeeded (see the POST .../videos/<course_id>/<edx_video_id> branch in
+    handle_videos). There is no real transcoding pipeline deployed for this
+    install, so instead of waiting on external encoder callbacks that will
+    never come, this:
+      1. Confirms the object landed in S3 and reads its size.
+      2. Parses its real duration straight out of the file.
+      3. Registers the original upload itself as the 'desktop_mp4' encoding
+         (this bucket already serves objects as public-read via bucket
+         policy -- confirmed empirically, not set here) and flips the VAL
+         status to 'file_complete', so Studio/LMS show it correctly.
+    """
+    bucket = storage_service_bucket()
+    key = storage_service_key(bucket, file_name=edx_video_id)
+    key = bucket.get_key(key.name)
+    if key is None:
+        LOGGER.warning(
+            'VIDEOS: finalize_uploaded_video found no S3 object for edx_video_id [%s] in course [%s]',
+            edx_video_id, course_key_string,
+        )
+        return
+    key.metadata = {}
+    url = key.generate_url(0, query_auth=False)
+    file_size = key.size
+
+    with NamedTemporaryFile() as tmp_file:
+        key.get_contents_to_file(tmp_file)
+        tmp_file.flush()
+        duration = _read_mp4_duration_seconds(tmp_file.name) or 0
+
+    try:
+        val_video = ValVideo.objects.get(edx_video_id=edx_video_id)
+        profile = Profile.objects.get(profile_name=DIRECT_UPLOAD_ENCODING_PROFILE)
+    except (ValVideo.DoesNotExist, Profile.DoesNotExist):
+        LOGGER.exception('VIDEOS: finalize_uploaded_video could not load VAL video/profile for [%s]', edx_video_id)
+        return
+
+    val_video.duration = duration
+    val_video.status = 'file_complete'
+    val_video.save()
+
+    EncodedVideo.objects.update_or_create(
+        video=val_video,
+        profile=profile,
+        defaults={
+            'url': url,
+            'file_size': file_size,
+            'bitrate': int((file_size * 8) / duration) if duration else 0,
+        },
+    )
+    LOGGER.info(
+        'VIDEOS: finalized direct upload for edx_video_id [%s], duration [%s]s, size [%s] bytes',
+        edx_video_id, duration, file_size,
+    )
 
 
 def send_video_status_update(updates):
