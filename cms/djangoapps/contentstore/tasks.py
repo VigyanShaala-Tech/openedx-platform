@@ -2299,3 +2299,23 @@ def _update_result_applies_to_block(result_entry, block_id):
         return block_category == result_type
     except Exception:  # pylint: disable=broad-except
         return False
+
+
+@shared_task
+def finalize_video_upload_task(course_key_string, edx_video_id):
+    """
+    VS CUSTOM: async wrapper around video_storage_handlers.finalize_uploaded_video
+    -- see that function's docstring for what it does and why it exists (this
+    install has no real transcoding pipeline wired up to the upload bucket).
+    Runs as a task since it downloads the uploaded file to read its duration.
+    """
+    # Local import to avoid circular import with video_storage_handlers, which
+    # itself imports from this module's sibling views package.
+    from cms.djangoapps.contentstore.video_storage_handlers import finalize_uploaded_video
+    try:
+        finalize_uploaded_video(course_key_string, edx_video_id)
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.exception(
+            'VIDEOS: finalize_video_upload_task failed for edx_video_id [%s] in course [%s]',
+            edx_video_id, course_key_string,
+        )
