@@ -23,6 +23,7 @@ def set_language_cookie(request, response, value):
         domain=settings.SHARED_COOKIE_DOMAIN,
         max_age=COOKIE_DURATION,
         secure=request.is_secure(),
+        httponly=True,
         samesite="None" if request.is_secure() else "Lax",
     )
 
