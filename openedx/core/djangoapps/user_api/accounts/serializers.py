@@ -308,6 +308,17 @@ class AccountLegacyProfileSerializer(serializers.HyperlinkedModelSerializer, Rea
         read_only_fields = ()
         explicit_read_only_fields = ("profile_image", "requires_parental_consent")
 
+    # Added by Developer
+    def to_internal_value(self, data):
+        """
+        Normalize an empty-string `year_of_birth` to None before field-level
+        validation runs.
+        """
+        if data.get("year_of_birth", None) == "":
+            data = data.copy()
+            data["year_of_birth"] = None
+        return super().to_internal_value(data)
+
     def validate_bio(self, new_bio):
         """ Enforce maximum length for bio. """
         if len(new_bio) > BIO_MAX_LENGTH:
